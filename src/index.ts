@@ -1,8 +1,8 @@
 import { Elysia, t } from "elysia";
-import { DEFAULT_PROCESSOR_URL } from "./utils/environment";
-import { type PaymentProcessorRequest, type PaymentRequest, type PaymentsSummaryResponse } from "./model/types";
+import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "./utils/environment";
+import { type PaymentProcessorRequest, type PaymentsSummaryResponse } from "./model/types";
 import { db } from "./database/database";
-import { currentHealthProcessorUrl } from "./utils/payment-processor";
+import { checkProcessorHealth } from "./utils/payment-processor";
 import createAccelerator from "json-accelerator";
 
 const paymentProcessorPayload = t.Object({
@@ -13,18 +13,40 @@ const paymentProcessorPayload = t.Object({
 
 const encode = createAccelerator(paymentProcessorPayload);
 
+let currentHealthyProcessor: 'default' | 'fallback' = 'default';
+
+setInterval(async () => {
+  console.log('Checking payment processor health...');
+  const isDefaultHealthy = await checkProcessorHealth(DEFAULT_PROCESSOR_URL);
+  console.log(`Default processor health: ${isDefaultHealthy}`);
+  
+  if (isDefaultHealthy) {
+    currentHealthyProcessor = 'default';
+  } else {
+    currentHealthyProcessor = 'fallback';
+  }
+}, 5_000);
+
+export let currentHealthProcessorUrl = currentHealthyProcessor === 'default'
+  ? DEFAULT_PROCESSOR_URL
+  : FALLBACK_PROCESSOR_URL;
+
 async function enqueuePayment(
-  payload: PaymentRequest,
+  payload: PaymentProcessorRequest,
 ) {
-  db.exec(`
-    INSERT INTO payment_queue (correlationId, amount)
-    VALUES (?, ?)
-    ON CONFLICT(correlationId) DO UPDATE SET amount = excluded.amount;
-  `, [payload.correlationId, payload.amount]);
+  try {
+    db.exec(`
+      INSERT INTO payment_queue (correlationId, amount, requestedAt)
+      VALUES (?, ?, ?);
+    `, [payload.correlationId, payload.amount, payload.requestedAt]);
+  } catch (error) {
+    console.error('Failed to enqueue payment:', error);
+    throw new Error('Failed to enqueue payment');
+  }
 }
 
 async function getPaymentQueue() {
-  return db.query("SELECT * FROM payment_queue LIMIT 100").all();
+  return db.query("SELECT * FROM payment_queue LIMIT 50").all();
 }
 
 async function postPayment(
@@ -37,7 +59,13 @@ async function postPayment(
     body: encode(payload),
   });
 
-  if (!res.ok) throw new Error('Failed to process payment');
+  const resBody = await res.text();
+
+  if (!res.ok) {    
+    if (!resBody.includes('CorrelationId already exists')) {
+      throw new Error(`Failed to post payment to ${processorUrl}: ${resBody}`);
+    }
+  }
 
   return processorUrl === DEFAULT_PROCESSOR_URL ? 'default' : 'fallback';
 }
@@ -47,22 +75,32 @@ async function storePayment(
   payload: PaymentProcessorRequest,
 ) {
   const tableName = processor === 'default' ? 'payments_default' : 'payments_fallback';
-  db.exec(`
-    INSERT INTO ${tableName} (amount, requestedAt)
-    VALUES (?);
-  `, [payload.amount, payload.requestedAt]);
+  try {
+    db.exec(`
+      INSERT INTO ${tableName} (amount, requestedAt)
+      VALUES (?, ?);
+    `, [payload.amount, payload.requestedAt]);
+  } catch (error) {
+    console.error(`Failed to store payment in ${tableName}:`, error);
+    throw new Error(`Failed to store payment in ${tableName}`);
+  }
 }
 
 async function handlePayments() {
   const queue = await getPaymentQueue() as any;
-  const successfulPayments = [];
+  if (queue.length === 0) {
+    console.log('No payments to process');
+    return;
+  }
 
-  for (const payment of queue) {
+  const successfulPayments: string[] = [];
+
+  await Promise.all(queue.map(async (payment: any) => {
     try {
       const processor = await postPayment({
         correlationId: payment.correlationId,
         amount: payment.amount,
-        requestedAt: new Date().toISOString(),
+        requestedAt: payment.requestedAt,
       });
 
       if (!processor) throw new Error('Failed to publish payment');
@@ -77,7 +115,9 @@ async function handlePayments() {
     } catch (error) {
       console.error('Failed to process payment:', error);
     }
-  }
+  })).then(() => {
+    console.log('Processed payments:', successfulPayments.length);
+  });
 
   if (successfulPayments.length > 0) {
     db.exec(`
@@ -118,6 +158,14 @@ async function getPaymentsSummary(from: string, to: string): Promise<PaymentsSum
   };
 }
 
+const clearDate = (date: string) => {
+  // Ensure the date from format YYYY-MM-DDTHH:mm:ss.sssZ is cleared to YYYY-MM-DD HH:mm:ss
+  return date
+    .replace('T', ' ')
+    .replace('Z', '')
+    .replace(/\.\d{3}/, ''); // Remove .sss (milliseconds)
+}
+
 async function getPaymentSummaryFromProcessor(
   processor: 'default' | 'fallback',
   from: string,
@@ -125,45 +173,54 @@ async function getPaymentSummaryFromProcessor(
 ) {
   const tableName = processor === 'default' ? 'payments_default' : 'payments_fallback';
 
-  const query = db.query(`
-    SELECT amount
-      FROM ${tableName}
-     WHERE date(requestedAt) BETWEEN date(${from}) AND date(${to});
-  `);
-
-  let totalRequests = 0;
-  let totalAmount = 0;
-
-  for (const row of query.iterate()) {
-    totalRequests += 1;
-    totalAmount += (row as any).amount
+  try {     
+    const query = db.query(
+      `SELECT amount
+         FROM ${tableName}
+        WHERE date(requestedAt) BETWEEN date(?) AND date(?);`,
+    );
+      
+    let totalRequests = 0;
+    let totalAmount = 0;
+  
+    for (const row of query.iterate(clearDate(from), clearDate(to))) {
+      totalRequests += 1;
+      totalAmount += ((row as any).amount).toFixed(2) || 0; // Ensure amount is a number
+    }
+  
+    return {
+      totalRequests,
+      totalAmount,
+    }
+  
+  } catch (error) {
+    console.error(`Failed to get payment summary for ${processor}:`, error);
   }
 
-  return {
-    totalRequests,
-    totalAmount,
-  }
+  throw new Error(`Failed to get payment summary for ${processor}`);
 }
 
 paymentsWorker();
 
 const app = new Elysia()
   .post('/payments', async ({ body, set }) => {
-    const { correlationId, amount } = body as PaymentRequest;
+    console.log('Received payment request');
+    const { correlationId, amount } = body as any;
     if (!correlationId || typeof amount !== 'number') {
       set.status = 400;
       return;
     }
 
     try {
-      await enqueuePayment({ correlationId, amount });
+      await enqueuePayment({ correlationId, amount, requestedAt: new Date().toISOString() });
       set.status = 201;
     } catch (error) {
       console.error('Failed to enqueue payment:', error);
       set.status = 500;
     }
   })
-  .get('/payments-summary', ({ query, set }) => {
+  .get('/payments-summary', async ({ query, set }) => {
+    console.log('Received payments summary request');
     const from = query.from;
     const to = query.to;
 
@@ -172,6 +229,9 @@ const app = new Elysia()
       return;
     }
 
-    return getPaymentsSummary(from, to);
+    const res = await getPaymentsSummary(from, to);
+    return res;
   })
-  .listen(9999);
+  .listen(9999, () => {
+    console.log('Server is running on http://localhost:9999');
+  });

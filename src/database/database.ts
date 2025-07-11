@@ -20,6 +20,7 @@ database.exec(`
   CREATE TABLE IF NOT EXISTS payment_queue (
     correlationId TEXT PRIMARY KEY NOT NULL,
     amount REAL NOT NULL,
+    requestedAt TEXT NOT NULL
   );
 `);
 

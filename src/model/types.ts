@@ -1,7 +1,3 @@
-export type PaymentRequest = {
-  correlationId: string;
-  amount: number;
-}
 
 export type PaymentsSummaryResponse = {
   default: {

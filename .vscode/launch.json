@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "bun",
+      "internalConsoleOptions": "neverOpen",
+      "request": "launch",
+      "name": "Debug src/index.ts",
+      "program": "src/index.ts",
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false,
+    }
+  ]
+}
