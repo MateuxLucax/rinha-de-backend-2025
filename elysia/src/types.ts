@@ -1,4 +1,3 @@
-
 export type PaymentsSummaryResponse = {
   default: {
     totalRequests: number;
@@ -10,20 +9,20 @@ export type PaymentsSummaryResponse = {
   }
 }
 
-export type PaymentProcessorRequest = {
-  correlationId: string;
-  amount: number;
-  requestedAt: string;
-}
-
 export type PaymentProcessorHealthCheckResponse = {
   failing: boolean;
   minResponseTime: number;
 }
 
-export class PaymentSummaryDatabaseRecord {
+export class PaymentProcessorRequest {
   constructor(
+    public correlationId: string,
     public amount: number,
-    public requestedAt: string,
+    public requestedAt: string
   ) {}
+}
+
+export enum PaymentProcessorType {
+  DEFAULT = "default",
+  FALLBACK = "fallback"
 }

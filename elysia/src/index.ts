@@ -1,237 +1,96 @@
-import { Elysia, t } from "elysia";
-import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "./utils/environment";
-import { type PaymentProcessorRequest, type PaymentsSummaryResponse } from "./model/types";
-import { db } from "./database/database";
-import { checkProcessorHealth } from "./utils/payment-processor";
-import createAccelerator from "json-accelerator";
+import Elysia, { t } from "elysia";
+import { enqueuePayment, runPaymentProcessor } from "./payment-store";
+import { PaymentProcessorRequest } from "./types";
+import { getPaymentSummary } from "./payment-summary";
+import swagger from "@elysiajs/swagger";
+import { initializeDatabase } from "./database";
+import { purgeDatabase } from "./purge-database";
 
-const paymentProcessorPayload = t.Object({
-	correlationId: t.String(),
-	amount: t.Number(),
-  requestedAt: t.String(),
-})
-
-const encode = createAccelerator(paymentProcessorPayload);
-
-let currentHealthyProcessor: 'default' | 'fallback' = 'default';
-
-setInterval(async () => {
-  console.log('Checking payment processor health...');
-  const isDefaultHealthy = await checkProcessorHealth(DEFAULT_PROCESSOR_URL);
-  console.log(`Default processor health: ${isDefaultHealthy}`);
-  
-  if (isDefaultHealthy) {
-    currentHealthyProcessor = 'default';
-  } else {
-    currentHealthyProcessor = 'fallback';
-  }
-}, 5_000);
-
-export let currentHealthProcessorUrl = currentHealthyProcessor === 'default'
-  ? DEFAULT_PROCESSOR_URL
-  : FALLBACK_PROCESSOR_URL;
-
-async function enqueuePayment(
-  payload: PaymentProcessorRequest,
-) {
-  try {
-    db.exec(`
-      INSERT INTO payment_queue (correlationId, amount, requestedAt)
-      VALUES (?, ?, ?);
-    `, [payload.correlationId, payload.amount, payload.requestedAt]);
-  } catch (error) {
-    console.error('Failed to enqueue payment:', error);
-    throw new Error('Failed to enqueue payment');
-  }
-}
-
-async function getPaymentQueue() {
-  return db.query("SELECT * FROM payment_queue LIMIT 50").all();
-}
-
-async function postPayment(
-  payload: PaymentProcessorRequest,
-): Promise<'default' | 'fallback'> {
-  const processorUrl = currentHealthProcessorUrl;
-  const res = await fetch(`${processorUrl}/payments`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: encode(payload),
-  });
-
-  const resBody = await res.text();
-
-  if (!res.ok) {    
-    if (!resBody.includes('CorrelationId already exists')) {
-      throw new Error(`Failed to post payment to ${processorUrl}: ${resBody}`);
+new Elysia()
+  .use(swagger({
+    documentation: {
+      info: {
+        title: "Rinha de Backend 2025 - Elysia",
+        description: "API for the Rinha de Backend 2025 competition using Elysia",
+        contact: {
+          name: "Mateus Brandt",
+          url: "https://github.com/mateuxlucax"
+        },
+        version: "1.0.0"
+      },
     }
-  }
-
-  return processorUrl === DEFAULT_PROCESSOR_URL ? 'default' : 'fallback';
-}
-
-async function storePayment(
-  processor: 'default' | 'fallback',
-  payload: PaymentProcessorRequest,
-) {
-  const tableName = processor === 'default' ? 'payments_default' : 'payments_fallback';
-  try {
-    db.exec(`
-      INSERT INTO ${tableName} (amount, requestedAt)
-      VALUES (?, ?);
-    `, [payload.amount, payload.requestedAt]);
-  } catch (error) {
-    console.error(`Failed to store payment in ${tableName}:`, error);
-    throw new Error(`Failed to store payment in ${tableName}`);
-  }
-}
-
-async function handlePayments() {
-  const queue = await getPaymentQueue() as any;
-  if (queue.length === 0) {
-    console.log('No payments to process');
-    return;
-  }
-
-  const successfulPayments: string[] = [];
-
-  await Promise.all(queue.map(async (payment: any) => {
-    try {
-      const processor = await postPayment({
-        correlationId: payment.correlationId,
-        amount: payment.amount,
-        requestedAt: payment.requestedAt,
-      });
-
-      if (!processor) throw new Error('Failed to publish payment');
-
-      await storePayment(processor, {
-        correlationId: payment.correlationId,
-        amount: payment.amount,
-        requestedAt: new Date().toISOString(),
-      });
-
-      successfulPayments.push(payment.correlationId);
-    } catch (error) {
-      console.error('Failed to process payment:', error);
-    }
-  })).then(() => {
-    console.log('Processed payments:', successfulPayments.length);
-  });
-
-  if (successfulPayments.length > 0) {
-    db.exec(`
-      DELETE FROM payment_queue
-      WHERE correlationId IN (${successfulPayments.map(() => '?').join(', ')});
-    `, successfulPayments);
-  }
-}
-
-let isProcessing = false;
-
-async function paymentsWorker() {
-  if (isProcessing) return;
-  isProcessing = true;
-  try {
-    await handlePayments();
-  } finally {
-    isProcessing = false;
-  }
-  setTimeout(paymentsWorker, 100);
-}
-
-async function getPaymentsSummary(from: string, to: string): Promise<PaymentsSummaryResponse> {
-  const [defaultSummary, fallbackSummary] = await Promise.all([
-    getPaymentSummaryFromProcessor('default', from, to),
-    getPaymentSummaryFromProcessor('fallback', from, to),
-  ]);
-
-  return {
-    default: {
-      totalRequests: defaultSummary.totalRequests,
-      totalAmount: defaultSummary.totalAmount,
-    },
-    fallback: {
-      totalRequests: fallbackSummary.totalRequests,
-      totalAmount: fallbackSummary.totalAmount,
-    },
-  };
-}
-
-const clearDate = (date: string) => {
-  // Ensure the date from format YYYY-MM-DDTHH:mm:ss.sssZ is cleared to YYYY-MM-DD HH:mm:ss
-  return date
-    .replace('T', ' ')
-    .replace('Z', '')
-    .replace(/\.\d{3}/, ''); // Remove .sss (milliseconds)
-}
-
-async function getPaymentSummaryFromProcessor(
-  processor: 'default' | 'fallback',
-  from: string,
-  to: string,
-) {
-  const tableName = processor === 'default' ? 'payments_default' : 'payments_fallback';
-
-  try {     
-    const query = db.query(
-      `SELECT amount
-         FROM ${tableName}
-        WHERE date(requestedAt) BETWEEN date(?) AND date(?);`,
-    );
-      
-    let totalRequests = 0;
-    let totalAmount = 0;
-  
-    for (const row of query.iterate(clearDate(from), clearDate(to))) {
-      totalRequests += 1;
-      totalAmount += ((row as any).amount).toFixed(2) || 0; // Ensure amount is a number
-    }
-  
+  }))
+  .get("/", () => {
     return {
-      totalRequests,
-      totalAmount,
+      info: "Rinha de Backend 2025 - Elysia",
+      status: "Running",
+      date: new Date().toISOString(),
+      author: "Mateus Brandt <https://github.com/mateuxlucax>"
     }
-  
-  } catch (error) {
-    console.error(`Failed to get payment summary for ${processor}:`, error);
-  }
-
-  throw new Error(`Failed to get payment summary for ${processor}`);
-}
-
-paymentsWorker();
-
-const app = new Elysia()
-  .post('/payments', async ({ body, set }) => {
-    console.log('Received payment request');
-    const { correlationId, amount } = body as any;
-    if (!correlationId || typeof amount !== 'number') {
-      set.status = 400;
-      return;
-    }
-
-    try {
-      await enqueuePayment({ correlationId, amount, requestedAt: new Date().toISOString() });
-      set.status = 201;
-    } catch (error) {
-      console.error('Failed to enqueue payment:', error);
-      set.status = 500;
-    }
+  }, {
+    response: {
+      200: t.Object({
+        info: t.String({
+          description: "Information about the API",
+          example: "Rinha de Backend 2025 - Elysia"
+        }),
+        status: t.String({
+          description: "Current status of the API",
+          example: "Running"
+        }),
+        date: t.String({
+          format: "date-time",
+          description: "Current date and time",
+          example: "2025-01-01T12:00:00Z"
+        }),
+        author: t.String({
+          description: "Author of the API",
+          example: "Mateus Brandt <https://github.com/mateuxlucax>"
+      })
+    })}
   })
-  .get('/payments-summary', async ({ query, set }) => {
-    console.log('Received payments summary request');
-    const from = query.from;
-    const to = query.to;
+  .post("/payments", async ({ body: { correlationId, amount } }) => {
+    enqueuePayment(new PaymentProcessorRequest(
+      correlationId,
+      amount,
+      new Date().toISOString()
+    ));
 
-    if (!from || !to) {
-      set.status = 400;
-      return;
-    }
-
-    const res = await getPaymentsSummary(from, to);
-    return res;
+    return;
+  }, {
+    body: t.Object({
+      correlationId: t.String({
+        description: "Unique identifier for the payment request",
+        example: "123e4567-e89b-12d3-a456-426614174000"
+      }),
+      amount: t.Number({
+        description: "Amount to be processed",
+        example: 100.50
+      }),
+    }),
+  })
+  .get("/payments-summary", ({ query: { from, to } }) => {
+    return getPaymentSummary(from, to);
+  }, {
+    query: t.Object({
+      from: t.String({ 
+        format: "date-time",
+        description: "Start date for the payment summary",
+        example: "2025-01-01T00:00:00Z"
+      }),
+      to: t.String({
+        format: "date-time",
+        description: "End date for the payment summary",
+        example: "2025-12-31T23:59:59Z"
+      }),
+    })
+  })
+  .post("/purge-payments", () => {
+    purgeDatabase();
+    return;
   })
   .listen(9999, () => {
-    console.log('Server is running on http://localhost:9999');
+    console.log("Server is running on http://localhost:9999");
+    initializeDatabase();
+    runPaymentProcessor();
   });

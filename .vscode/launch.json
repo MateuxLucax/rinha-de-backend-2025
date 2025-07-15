@@ -6,8 +6,13 @@
       "internalConsoleOptions": "neverOpen",
       "request": "launch",
       "name": "Debug src/index.ts",
-      "program": "src/index.ts",
+      "program": "elysia/src/index.ts",
       "cwd": "${workspaceFolder}",
+      "env": {
+        "SQLITE_DB_PATH": "elysia/payments.sqlite",
+        "PAYMENT_PROCESSOR_URL_DEFAULT": "http://localhost:8001",
+        "PAYMENT_PROCESSOR_URL_FALLBACK": "http://localhost:8002",
+      },
       "stopOnEntry": false,
     }
   ]
