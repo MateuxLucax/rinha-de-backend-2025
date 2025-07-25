@@ -5,6 +5,12 @@ import { getPaymentSummary } from "./payment-summary";
 import swagger from "@elysiajs/swagger";
 import { initializeDatabase } from "./database";
 import { purgeDatabase } from "./purge-database";
+import { opentelemetry } from "@elysiajs/opentelemetry";
+
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
+import { AXIOM_DATASET, AXIOM_TOKEN } from "./environment";
+import { initProcessorHealthCheck } from "./processor-health";
 
 new Elysia()
   .use(swagger({
@@ -20,6 +26,22 @@ new Elysia()
       },
     }
   }))
+  .use(
+    opentelemetry({
+      spanProcessors: [
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({
+            url: 'https://api.axiom.co/v1/traces', 
+            headers: {
+              'Authorization': `Bearer ${AXIOM_TOKEN}`, 
+              'X-Axiom-Dataset': AXIOM_DATASET
+            } 
+          })
+        )
+      ]
+    })
+  
+  )
   .get("/", () => {
     return {
       info: "Rinha de Backend 2025 - Elysia",
@@ -85,12 +107,13 @@ new Elysia()
       }),
     })
   })
-  .post("/purge-payments", () => {
-    purgeDatabase();
+  .post("/purge-payments", async () => {
+    await purgeDatabase();
     return;
   })
   .listen(9999, () => {
     console.log("Server is running on http://localhost:9999");
-    initializeDatabase();
+    purgeDatabase();
     runPaymentProcessor();
+    initProcessorHealthCheck();
   });

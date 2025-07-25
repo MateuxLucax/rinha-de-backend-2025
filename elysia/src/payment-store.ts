@@ -1,94 +1,9 @@
 import createAccelerator from "json-accelerator";
-import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL, MIN_RESPONSE_TIME_THRESHOLD } from "./environment";
-import { PaymentProcessorRequest, PaymentProcessorType, type PaymentProcessorHealthCheckResponse } from "./types";
+import { PaymentProcessorRequest, PaymentProcessorType, PaymentProcessorUrl } from "./types";
 import { t } from "elysia";
 import { db } from "./database";
-
-let currentProcessorType: PaymentProcessorType = PaymentProcessorType.DEFAULT;
-
-const HEALTH_CHECK_INTERVAL = 5_000;
-
-setInterval(async () => {
-  try {
-    const results = await Promise.allSettled([
-      fetch(`${DEFAULT_PROCESSOR_URL}//payments/service-health`),
-      fetch(`${FALLBACK_PROCESSOR_URL}//payments/service-health`)
-    ]);
-
-    let defaultHealth: PaymentProcessorHealthCheckResponse | null = null;
-    let fallbackHealth: PaymentProcessorHealthCheckResponse | null = null;
-
-    for (let i = 0; i < results.length; i++) {
-      const response = results[i];
-      const processor = i === 0 ? PaymentProcessorType.DEFAULT : PaymentProcessorType.FALLBACK;
-
-      if (response === undefined) continue;
-
-      if (response.status === "rejected") {
-        if (processor === PaymentProcessorType.DEFAULT) {
-          defaultHealth = { failing: true, minResponseTime: Infinity };
-        } else {
-          fallbackHealth = { failing: true, minResponseTime: Infinity };
-        }
-
-        continue;
-      }
-
-      try {
-        const data = await response.value.json() as PaymentProcessorHealthCheckResponse;
-        if (processor === PaymentProcessorType.DEFAULT) {
-          defaultHealth = data;
-        } else {
-          fallbackHealth = data;
-        }  
-      } catch (error) {
-        console.error(`Error parsing health check response for ${processor}:`, error);
-        if (processor === PaymentProcessorType.DEFAULT) {
-          defaultHealth = { failing: true, minResponseTime: Infinity };
-        } else {
-          fallbackHealth = { failing: true, minResponseTime: Infinity };
-        }
-      }
-    }
-
-    if (!defaultHealth || !fallbackHealth) {
-      console.error("Failed to fetch health check data for both processors.");
-      return currentProcessorType;
-    }
-
-    if (defaultHealth.failing && fallbackHealth.failing) {
-      console.error("Both payment processors are failing.");
-      return;
-    }
-
-    if (defaultHealth.failing) {
-      currentProcessorType = PaymentProcessorType.FALLBACK;
-    } else if (fallbackHealth.failing) {
-      currentProcessorType = PaymentProcessorType.DEFAULT;
-    } else if (defaultHealth.minResponseTime < MIN_RESPONSE_TIME_THRESHOLD) {
-      currentProcessorType = PaymentProcessorType.DEFAULT;
-    } else if (fallbackHealth.minResponseTime < MIN_RESPONSE_TIME_THRESHOLD) {
-      currentProcessorType = PaymentProcessorType.FALLBACK;
-    } else {
-      currentProcessorType = PaymentProcessorType.DEFAULT;
-    }
-  } catch (error) {
-    console.error("Error checking payment processor health:", error);
-    if (currentProcessorType === PaymentProcessorType.DEFAULT) {
-      currentProcessorType = PaymentProcessorType.FALLBACK;
-    } else {
-      currentProcessorType = PaymentProcessorType.DEFAULT;
-    }
-  }
-
-}, HEALTH_CHECK_INTERVAL);
-
-
-async function getHealthProcessorUrl() {
-  return currentProcessorType === PaymentProcessorType.DEFAULT
-    ? DEFAULT_PROCESSOR_URL
-    : FALLBACK_PROCESSOR_URL;
-}
+import { getHealthyProcessor } from "./processor-health";
+import { record } from "@elysiajs/opentelemetry";
 
 const paymentProcessorPayload = t.Object({
 	correlationId: t.String(),
@@ -98,113 +13,140 @@ const paymentProcessorPayload = t.Object({
 
 const encode = createAccelerator(paymentProcessorPayload);
 
-async function postPayment(payload: PaymentProcessorRequest): Promise<boolean> {
-  try {
-    const response = await fetch(`${await getHealthProcessorUrl()}//payments`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: encode(payload)
-    });
+async function postPayment(payload: PaymentProcessorRequest): Promise<PaymentProcessorType> {
+  return record('store.payment.post', async () => {
+    try {
+      const processor = getHealthyProcessor();
+      const url = PaymentProcessorUrl.getUrl(processor);
+      const response = await fetch(`${url}//payments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: encode(payload),
+        signal: AbortSignal.timeout(500)
+      });
 
-    if (response.ok) return true;
-  } catch (error) {
-    console.error("Error posting payment:", error);
-  }
+      if (response.ok) return processor;
+      else {
+        const body = await response.text();
+        if (body?.includes("already exists")) return processor;
+      }
+    } catch (error) {
+      if (error instanceof DOMException) {
+        // Timeout error
+      } else if (error instanceof Error) {
+        // Other fetch error
+      } else {
+        console.error("Error posting payment:", error);
+      }
+    }
 
-  return false;
+    return PaymentProcessorType.NONE;
+  });
 }
 
 export function enqueuePayment(payload: PaymentProcessorRequest): boolean {
-  try {
-    db.exec(`
-      INSERT INTO payment_queue (correlationId, amount, requestedAt)
-      VALUES (?, ?, ?);
-    `, [payload.correlationId, payload.amount, payload.requestedAt]);
+  return record('store.payment.enqueue', () => {
+    try {
+      db.exec(`
+        INSERT INTO payment_queue (correlationId, amount, requestedAt)
+        VALUES (?, ?, ?);
+      `, [payload.correlationId, payload.amount, payload.requestedAt]);
 
-    return true;
-  } catch (error) {
-    console.error("Error enqueuing payment:", error);
-  }
+      return true;
+    } catch (error) {
+      console.error("Error enqueuing payment:", error);
+    }
 
-  return false;
+    return false;
+  });
 }
 
 function dequeuePayment(): PaymentProcessorRequest[] {
-  try {
-    const query = db.query("SELECT * FROM payment_queue ORDER BY id ASC LIMIT 50");
-    const payments: PaymentProcessorRequest[] = [];
+  return record('store.payment.dequeue', () => {
+    try {
+      const query = db.query("SELECT * FROM payment_queue ORDER BY id ASC LIMIT 10");
+      const payments: PaymentProcessorRequest[] = [];
 
-    for (const row of query.iterate()) {
-      const correlationId = (row as any).correlationId;
-      payments.push(new PaymentProcessorRequest(
-        correlationId,
-        (row as any).amount,
-        (row as any).requestedAt
-      ));
+      for (const row of query.iterate()) {
+        const correlationId = (row as any).correlationId;
+        payments.push(new PaymentProcessorRequest(
+          correlationId,
+          (row as any).amount,
+          (row as any).requestedAt
+        ));
+
+        removeFromQueue(correlationId);
+      }
+
+      return payments;
+    } catch (error) {
+      console.error("Error dequeuing payment:", error);
     }
 
-    return payments;
-  } catch (error) {
-    console.error("Error dequeuing payment:", error);
-  }
-
-  return [];
+    return [];
+  });
 }
 
 function removeFromQueue(correlationId: string): boolean {
-  try {
-    db.exec("DELETE FROM payment_queue WHERE correlationId = ?;", [correlationId]);
-    return true;
-  } catch (error) {
-    console.error("Error removing payment from queue:", error);
-  }
+  return record('store.payment.removeFromQueue', () => {
+    try {
+      db.exec("DELETE FROM payment_queue WHERE correlationId = ?;", [correlationId]);
+      return true;
+    } catch (error) {
+      console.error("Error removing payment from queue:", error);
+    }
 
-  return false;
+    return false;
+  });
 }
 
 function storePayment(payload: PaymentProcessorRequest, type: PaymentProcessorType): boolean {
-  const table = type === PaymentProcessorType.DEFAULT ? "payments_default" : "payments_fallback";
+  return record('store.payment.store', () => {
+    const table = type === PaymentProcessorType.DEFAULT ? "payments_default" : "payments_fallback";
 
-  try {
-    db.exec(`
-      INSERT INTO ${table} (amount, requestedAt)
-      VALUES (?, ?);
-    `, [payload.amount, payload.requestedAt]);
+    try {
+      db.exec(`
+        INSERT INTO ${table} (amount, requestedAt)
+        VALUES (?, ?);
+      `, [payload.amount, payload.requestedAt]);
 
-    return true;
-  } catch (error) {
-    console.error("Error storing payment:", error);
-  }
+      return true;
+    } catch (error) {
+      console.error("Error storing payment:", error);
+    }
 
-  return false;
+    return false;
+  });
 }
 
 async function processPayment() {
   const payments = dequeuePayment();
 
   if (payments.length === 0) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 10));
     return;
   }
 
-  const results = await Promise.all(payments.map(postPayment));
+  record('store.payment.process', async () => {
+    const results = await Promise.all(payments.map(postPayment));
 
+    for (let i = 0; i < results.length; i++) {
+      const payment = payments[i];
 
-  for (let i = 0; i < results.length; i++) {
-    const payment = payments[i];
+      if (!payment) continue;
 
-    if (!payment) continue;
+      const processor = results[i];
+      if (!processor || processor === PaymentProcessorType.NONE) {
+        // console.error(`Failed to process payment with correlationId: ${payment.correlationId} | processor: ${processor}`);
+        enqueuePayment(payment);
+        continue;
+      }
 
-    if (!results[i]) {
-      console.error(`Failed to process payment with correlationId: ${payment.correlationId} | currentProcessorType: ${currentProcessorType}`);
-      continue;
+      storePayment(payment, processor);
     }
-
-    storePayment(payment, currentProcessorType);
-    removeFromQueue(payment.correlationId);
-  }
+  });
 }
 
 export async function runPaymentProcessor() {

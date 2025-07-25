@@ -1,3 +1,5 @@
+import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "./environment";
+
 export type PaymentsSummaryResponse = {
   default: {
     totalRequests: number;
@@ -24,5 +26,19 @@ export class PaymentProcessorRequest {
 
 export enum PaymentProcessorType {
   DEFAULT = "default",
-  FALLBACK = "fallback"
+  FALLBACK = "fallback",
+  NONE = "none"
+}
+
+export const PaymentProcessorUrl = {
+  getUrl(type: PaymentProcessorType): string {
+    switch (type) {
+      case PaymentProcessorType.DEFAULT:
+        return DEFAULT_PROCESSOR_URL;
+      case PaymentProcessorType.FALLBACK:
+        return FALLBACK_PROCESSOR_URL;
+      default:
+        throw new Error(`Unknown payment processor type: ${type}`);
+    }
+  }
 }
