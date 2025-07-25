@@ -1,16 +1,15 @@
 import Elysia, { t } from "elysia";
-import { enqueuePayment, runPaymentProcessor } from "./payment-store";
-import { PaymentProcessorRequest } from "./types";
-import { getPaymentSummary } from "./payment-summary";
+import { enqueuePayment, runPaymentProcessor } from "./services/payment-store";
+import { Payment } from "./model/types";
+import { getPaymentSummary } from "./services/payment-summary";
 import swagger from "@elysiajs/swagger";
-import { initializeDatabase } from "./database";
-import { purgeDatabase } from "./purge-database";
+import { purgeDatabase } from "../database/purge";
 import { opentelemetry } from "@elysiajs/opentelemetry";
 
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { AXIOM_DATASET, AXIOM_TOKEN } from "./environment";
-import { initProcessorHealthCheck } from "./processor-health";
+import { initProcessorHealthCheck } from "./services/processor-health";
 
 new Elysia()
   .use(swagger({
@@ -72,10 +71,10 @@ new Elysia()
     })}
   })
   .post("/payments", async ({ body: { correlationId, amount } }) => {
-    enqueuePayment(new PaymentProcessorRequest(
+    enqueuePayment(new Payment(
       correlationId,
       amount,
-      new Date().toISOString()
+      new Date()
     ));
 
     return;

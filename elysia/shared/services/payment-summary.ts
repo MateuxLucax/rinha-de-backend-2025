@@ -1,6 +1,6 @@
 import { record } from "@elysiajs/opentelemetry";
-import { db } from "./database";
-import { PaymentProcessorType } from "./types";
+import { db } from "../data";
+import { PaymentProcessorType } from "../model/types";
 
 const clearDate = (date: string) => {
   return date

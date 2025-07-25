@@ -1,5 +1,5 @@
-import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL, MIN_RESPONSE_TIME_THRESHOLD } from "./environment";
-import { PaymentProcessorType, type PaymentProcessorHealthCheckResponse } from "./types";
+import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL, MIN_RESPONSE_TIME_THRESHOLD } from "../environment";
+import { PaymentProcessorType, type PaymentProcessorHealthCheckResponse } from "../model/types";
 
 let currentProcessorType: PaymentProcessorType = PaymentProcessorType.DEFAULT;
 

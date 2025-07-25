@@ -1,7 +1,7 @@
 import createAccelerator from "json-accelerator";
-import { PaymentProcessorRequest, PaymentProcessorType, PaymentProcessorUrl } from "./types";
+import { Payment, PaymentProcessorType, PaymentProcessorUrl } from "../model/types";
 import { t } from "elysia";
-import { db } from "./database";
+import { db } from "../data";
 import { getHealthyProcessor } from "./processor-health";
 import { record } from "@elysiajs/opentelemetry";
 
@@ -13,7 +13,9 @@ const paymentProcessorPayload = t.Object({
 
 const encode = createAccelerator(paymentProcessorPayload);
 
-async function postPayment(payload: PaymentProcessorRequest): Promise<PaymentProcessorType> {
+const queue: Payment[] = [];
+
+async function postPayment(payload: Payment): Promise<PaymentProcessorType> {
   return record('store.payment.post', async () => {
     try {
       const processor = getHealthyProcessor();
@@ -46,63 +48,26 @@ async function postPayment(payload: PaymentProcessorRequest): Promise<PaymentPro
   });
 }
 
-export function enqueuePayment(payload: PaymentProcessorRequest): boolean {
+export function enqueuePayment(payload: Payment): boolean {
   return record('store.payment.enqueue', () => {
-    try {
-      db.exec(`
-        INSERT INTO payment_queue (correlationId, amount, requestedAt)
-        VALUES (?, ?, ?);
-      `, [payload.correlationId, payload.amount, payload.requestedAt]);
-
-      return true;
-    } catch (error) {
-      console.error("Error enqueuing payment:", error);
-    }
-
-    return false;
+    queue.push(payload);
+    return true;
   });
 }
 
-function dequeuePayment(): PaymentProcessorRequest[] {
+function dequeuePayment(): Payment[] {
   return record('store.payment.dequeue', () => {
-    try {
-      const query = db.query("SELECT * FROM payment_queue ORDER BY id ASC LIMIT 10");
-      const payments: PaymentProcessorRequest[] = [];
-
-      for (const row of query.iterate()) {
-        const correlationId = (row as any).correlationId;
-        payments.push(new PaymentProcessorRequest(
-          correlationId,
-          (row as any).amount,
-          (row as any).requestedAt
-        ));
-
-        removeFromQueue(correlationId);
-      }
-
-      return payments;
-    } catch (error) {
-      console.error("Error dequeuing payment:", error);
-    }
-
-    return [];
+    return queue.splice(0, 10);
   });
 }
 
 function removeFromQueue(correlationId: string): boolean {
   return record('store.payment.removeFromQueue', () => {
-    try {
-      db.exec("DELETE FROM payment_queue WHERE correlationId = ?;", [correlationId]);
-      return true;
-    } catch (error) {
-      console.error("Error removing payment from queue:", error);
-    }
-
-    return false;
+    return true;
   });
 }
 
-function storePayment(payload: PaymentProcessorRequest, type: PaymentProcessorType): boolean {
+function storePayment(payload: Payment, type: PaymentProcessorType): boolean {
   return record('store.payment.store', () => {
     const table = type === PaymentProcessorType.DEFAULT ? "payments_default" : "payments_fallback";
 

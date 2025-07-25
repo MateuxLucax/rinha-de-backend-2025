@@ -1,6 +1,6 @@
-import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "./environment";
+import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "../environment";
 
-export type PaymentsSummaryResponse = {
+export type PaymentSummary = {
   default: {
     totalRequests: number;
     totalAmount: number;
@@ -16,11 +16,11 @@ export type PaymentProcessorHealthCheckResponse = {
   minResponseTime: number;
 }
 
-export class PaymentProcessorRequest {
+export class Payment {
   constructor(
     public correlationId: string,
     public amount: number,
-    public requestedAt: string
+    public requestedAt: Date
   ) {}
 }
 
