@@ -1,47 +1,25 @@
 import { record } from "@elysiajs/opentelemetry";
-import { db } from "../data";
-import { PaymentProcessorType } from "../model/types";
+import { PaymentProcessorType, type PaymentSummaryPart } from "../model/types";
+import { abort } from "../util";
+import { DATABASE_URL } from "../environment";
 
-const clearDate = (date: string) => {
-  return date
-    .replace('T', ' ')
-    .replace('Z', '')
-    .replace(/\.\d{3}/, ''); // Remove .sss (milliseconds)
-}
-
-function getPaymentSummaryFromProcessor(
+async function getPaymentSummaryFromProcessor(
   processor: PaymentProcessorType,
   from: string,
   to: string,
 ) {
-  return record(`store.payment.getPaymentSummary.${processor}`, () => {
-    const table = processor === PaymentProcessorType.DEFAULT ? 'payments_default' : 'payments_fallback';
+  return record(`store.payment.summary.${processor}`, async () => {
+    try {
+      const response = await fetch(`${DATABASE_URL}/summary/${processor}?from=${from}&to=${to}`, abort);
 
-    try {     
-      const query = db.query(
-        `SELECT amount
-          FROM ${table}
-          WHERE date(requestedAt) >= date(?) 
-            AND date(requestedAt) <= date(?)`,
-      );
-        
-      let totalRequests = 0;
-      let totalAmount = 0;
-    
-      for (const row of query.iterate(clearDate(from), clearDate(to))) {
-        totalRequests += 1;
-        totalAmount += (((row as any).amount) as number)
-      }
-    
-      return {
-        totalRequests,
-        totalAmount: totalAmount.toFixed(2),
-      }
+      return await response.json() as PaymentSummaryPart;
     } catch (error) {
-      console.error(`Failed to get payment summary for ${processor}:`, error);
+      console.error(`Error fetching payment summary for ${processor}:`, error);
+      return {
+        totalRequests: 0,
+        totalAmount: 0,
+      };
     }
-
-    throw new Error(`Failed to get payment summary for ${processor}`);
   });
 }
 

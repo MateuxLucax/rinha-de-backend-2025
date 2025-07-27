@@ -1,12 +1,13 @@
-import { opentelemetry } from "@elysiajs/opentelemetry";
-import swagger from "@elysiajs/swagger";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import Elysia, { t } from "elysia";
-import { AXIOM_DATASET, AXIOM_TOKEN, ZMQ_PORT } from "../shared/environment";
-import { Payment } from "../shared/model/types";
-import { Publisher } from "zeromq"
-import { fastEncode } from "../shared/encode";
+import { opentelemetry } from "@elysiajs/opentelemetry";
+
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
+import swagger from "@elysiajs/swagger";
+import { AXIOM_DATASET, AXIOM_TOKEN, PORT } from "../shared/environment";
+import { getPaymentSummary } from "../shared/services/payment-summary";
+import { purge } from "../shared/data/database";
+import { sendToQueue } from "../shared/data/queue";
 
 new Elysia()
   .use(swagger({
@@ -36,7 +37,6 @@ new Elysia()
         )
       ]
     })
-  
   )
   .get("/", () => {
     return {
@@ -68,15 +68,13 @@ new Elysia()
     })}
   })
   .post("/payments", async ({ body: { correlationId, amount } }) => {
-    await publisher.send(
-      fastEncode(
-        new Payment(
-          correlationId,
-          amount,
-          new Date()
-        )
-      )
-    )
+    sendToQueue({
+      correlationId,
+      amount,
+      requestedAt: new Date().getTime()
+    });
+
+    return;
   }, {
     body: t.Object({
       correlationId: t.String({
@@ -105,10 +103,7 @@ new Elysia()
       }),
     })
   })
-  .post("/purge-payments", async () => {
-    await purgeDatabase();
-    return;
-  })
-
-const publisher = new Publisher();
-publisher.bind(`tcp://127.0.0.1:${ZMQ_PORT}`)
+  .post("/purge-payments", purge)
+  .listen(PORT, () => {
+    console.log("🦊 Server is running on http://localhost:9999");
+  });

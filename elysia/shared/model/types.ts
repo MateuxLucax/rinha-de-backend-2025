@@ -1,14 +1,13 @@
 import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "../environment";
 
+export type PaymentSummaryPart = {
+  totalRequests: number;
+  totalAmount: number;
+}
+
 export type PaymentSummary = {
-  default: {
-    totalRequests: number;
-    totalAmount: number;
-  },
-  fallback: {
-    totalRequests: number;
-    totalAmount: number;
-  }
+  default: PaymentSummaryPart;
+  fallback: PaymentSummaryPart;
 }
 
 export type PaymentProcessorHealthCheckResponse = {
@@ -16,18 +15,15 @@ export type PaymentProcessorHealthCheckResponse = {
   minResponseTime: number;
 }
 
-export class Payment {
-  constructor(
-    public correlationId: string,
-    public amount: number,
-    public requestedAt: Date
-  ) {}
+export type Payment = {
+  correlationId: string;
+  amount: number;
+  requestedAt: number; // Timestamp in milliseconds since epoch
 }
 
 export enum PaymentProcessorType {
   DEFAULT = "default",
-  FALLBACK = "fallback",
-  NONE = "none"
+  FALLBACK = "fallback"
 }
 
 export const PaymentProcessorUrl = {
@@ -37,8 +33,6 @@ export const PaymentProcessorUrl = {
         return DEFAULT_PROCESSOR_URL;
       case PaymentProcessorType.FALLBACK:
         return FALLBACK_PROCESSOR_URL;
-      default:
-        throw new Error(`Unknown payment processor type: ${type}`);
     }
   }
 }

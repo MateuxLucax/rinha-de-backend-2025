@@ -1,0 +1,81 @@
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "9999:80"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  database:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - TARGET=database/index.ts
+    container_name: database
+    env_file:
+      - .env
+
+  api-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - TARGET=api/index.ts
+    container_name: api-1
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api1.rule=Host(`api1.localhost`)"
+      - "traefik.http.routers.api1.entrypoints=web"
+      - "traefik.http.services.api1.loadbalancer.server.port=9999"
+
+  api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - TARGET=api/index.ts
+    container_name: api-2
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api2.rule=Host(`api2.localhost`)"
+      - "traefik.http.routers.api2.entrypoints=web"
+      - "traefik.http.services.api2.loadbalancer.server.port=9999"
+
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - TARGET=worker/index.ts
+    container_name: worker-1
+    env_file:
+      - .env
+    environment:
+      - PAYMENTS_ZMQ=api-1:5555
+      - HEALTH_ZMQ_A=api-1:4444
+      - HEALTH_ZMQ_B=api-2:4444
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - TARGET=worker/index.ts
+    container_name: worker-2
+    env_file:
+      - .env
+    environment:
+      - PAYMENTS_ZMQ=api-2:5555
+      - HEALTH_ZMQ_A=api-1:4444
+      - HEALTH_ZMQ_B=api-2:4444

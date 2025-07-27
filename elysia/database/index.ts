@@ -2,8 +2,8 @@ import { opentelemetry } from "@elysiajs/opentelemetry";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import Elysia, { t } from "elysia";
-import { AXIOM_DATASET, AXIOM_TOKEN } from "../shared/environment";
-import { PaymentProcessorType, Payment } from "../shared/model/types";
+import { AXIOM_DATASET, AXIOM_TOKEN, PORT } from "../shared/environment";
+import { PaymentProcessorType, type Payment } from "../shared/model/types";
 
 const defaultPayments: Payment[] = [];
 const fallbackPayments: Payment[] = [];
@@ -24,13 +24,13 @@ new Elysia()
       ]
     })  
   )
-  .post("/publish/:processor", ({ body, params: { processor } }) => {
+  .post("/store/:processor", ({ body, params: { processor } }) => {
     switch (processor) {
       case PaymentProcessorType.DEFAULT:
-        defaultPayments.push(new Payment(body.correlationId, body.amount, new Date()));
+        defaultPayments.push(body);
         break;
       case PaymentProcessorType.FALLBACK:
-        fallbackPayments.push(new Payment(body.correlationId, body.amount, new Date()));
+        fallbackPayments.push(body);
         break;
       default:
         throw new Error(`Unknown processor type: ${processor}`);
@@ -45,34 +45,45 @@ new Elysia()
         description: "Amount to be processed",
         example: 100.50
       }),
+      requestedAt: t.Integer({
+        description: "Timestamp when the payment was requested, in milliseconds since epoch",
+        example: 1704067200000 // Example: 2024-01-01T00:00:00Z
+      })
     }),
+    params: t.Object({
+      processor: t.Enum(PaymentProcessorType, {
+        description: "Payment processor type",
+        example: PaymentProcessorType.DEFAULT
+      })
+    })
   })
   .get("summary/:processor", ({ query: { from, to }, params: { processor } }) => {
-    const toDate = new Date(to);
-    const fromDate = new Date(from);
+    let totalRequests = 0;
+    let totalAmount = 0;
 
-    const filteredPayments = (processor === PaymentProcessorType.DEFAULT ? defaultPayments : fallbackPayments)
-      .filter(payment => {
-        return payment.requestedAt >= fromDate && payment.requestedAt <= toDate;
-      });
+    for (const payment of (processor === PaymentProcessorType.DEFAULT ? defaultPayments : fallbackPayments)) {
+      if (payment.requestedAt < from) return;
+      if (payment.requestedAt > to) return;
 
-    const totalAmount = filteredPayments.reduce((sum, payment) => sum + payment.amount, 0);
+      totalRequests++;
+      totalAmount += payment.amount;
+    }
 
     return {
-      totalRequests: filteredPayments.length,
+      totalRequests: totalRequests,
       totalAmount
     }
   }, {
     query: t.Object({
-      from: t.String({ 
-        format: "date-time",
-        description: "Start date for the payment summary",
-        example: "2025-01-01T00:00:00Z"
+      from: t.Integer({
+        format: "integer",
+        description: "Start date for the payment summary in milliseconds since epoch",
+        example: "1704067200000" // Example: 2024-01-01T00:00:00Z
       }),
-      to: t.String({
-        format: "date-time",
-        description: "End date for the payment summary",
-        example: "2025-12-31T23:59:59Z"
+      to: t.Integer({
+        format: "integer",
+        description: "End date for the payment summary in milliseconds since epoch",
+        example: "1704067200000" // Example: 2024-01-01T00:00:00Z
       }),
     })
   })
@@ -80,6 +91,6 @@ new Elysia()
     while (defaultPayments.length > 0) defaultPayments.pop();
     while (fallbackPayments.length > 0) fallbackPayments.pop();
   })
-  .listen(3000, () => {
-    console.log("Server is running on http://localhost:9999");
+  .listen(PORT, () => {
+    console.log(`🦊 Database is running on http://localhost:${PORT}`);
   });
