@@ -2,7 +2,7 @@ import { record } from "@elysiajs/opentelemetry";
 import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "../environment";
 import { PaymentProcessorType, type PaymentProcessorHealthCheckResponse } from "../model/types";
 import { abort } from "../util";
-import { sendProcessorHealth } from "../data/queue";
+import { enqueueHealthyProcessor } from "../data/queue";
 
 const HEALTH_CHECK_INTERVAL = 5_000;
 
@@ -49,7 +49,7 @@ export function initProcessorHealthCheck() {
   setInterval(async () => {
     const healthyProcessor = await checkProcessorHealth();
     if (healthyProcessor) {
-      sendProcessorHealth(healthyProcessor);
+      await enqueueHealthyProcessor(healthyProcessor);
     } else {
       console.warn("❗ No healthy payment processor found.");
     }

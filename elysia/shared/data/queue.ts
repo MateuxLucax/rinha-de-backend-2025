@@ -1,40 +1,32 @@
-import { Pull, Push } from "zeromq";
-import { HEALTH_ZMQ_A as A_HEALTH_ZMQ, HEALTH_ZMQ_B as B_HEALTH_ZMQ, PAYMENTS_ZMQ, PUBLISH_HEALTH_PORT, PUBLISH_PAYMENTS_PORT } from "../environment";
-import { fastEncode } from "../util";
 import { record } from "@elysiajs/opentelemetry";
 import type { Payment, PaymentProcessorType } from "../model/types";
+import { decode, encode } from "../util";
+import { redis } from "bun";
 
-const push = new Push();
-push.bind(`tcp://127.0.0.1:${PUBLISH_PAYMENTS_PORT}`);
-
-export async function sendToQueue(payment: Payment) {
-  record('queue.send', async () => {
-    try {
-      await push.send(fastEncode(payment));
-    } catch (error) {
-      console.error("❗ Error sending to queue:", error);
-    }
+export async function enqueuePayment(payload: Payment) {
+  record('queue.payment.enqueue', async () => {
+    await redis.lpush("payments", encode(payload));
   });
 }
 
-const pushHealth = new Push();
-push.bind(`tcp://127.0.0.1:${PUBLISH_HEALTH_PORT}`);
+export async function dequeuePayment(): Promise<Payment | null> {
+  return record('queue.payment.dequeue', async () => {
+    const data = await redis.lpop("payments");
 
-export async function sendProcessorHealth(processor: PaymentProcessorType){
-  record('queue.send.health', async () => {
-    try {
-      await pushHealth.send(["health", processor]);
-    } catch (error) {
-      console.error("❗ Error sending processor health to queue:", error);
-    }
+    return data ? decode(data) : null;
   });
 }
 
-export const pull = new Pull();
-pull.connect(`tcp://${PAYMENTS_ZMQ}`);
+export async function enqueueHealthyProcessor(processor: PaymentProcessorType) {
+  record('queue.processor.enqueue', async () => {
+    await redis.set("healthy-processor", processor);
+  });
+}
 
-export const pullHealthA = new Pull();
-pullHealthA.connect(`tcp://${A_HEALTH_ZMQ}`);
+export async function getHealthyProcessor(): Promise<PaymentProcessorType | null> {
+  return record('queue.processor.get', async () => {
+    const processor = await redis.get("healthy-processor");
 
-export const pullHealthB = new Pull();
-pullHealthB.connect(`tcp://${B_HEALTH_ZMQ}`);
+    return processor as PaymentProcessorType | null;
+  });
+}

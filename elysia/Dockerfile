@@ -14,6 +14,7 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
+ARG TARGET
 ENV NODE_ENV=production
 RUN bun build \
   --compile \
@@ -23,8 +24,10 @@ RUN bun build \
   --outfile server \
   ./${TARGET}
 
-FROM alpine:3.22.1 AS release
+FROM debian:bullseye-slim AS release
 
-COPY --from=prerelease /usr/src/app/server .
+WORKDIR /usr/src/app
+
+COPY --from=prerelease /usr/src/app/server ./server
 
 ENTRYPOINT [ "./server" ]

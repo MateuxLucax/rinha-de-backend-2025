@@ -5,9 +5,9 @@ import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import swagger from "@elysiajs/swagger";
 import { AXIOM_DATASET, AXIOM_TOKEN, PORT } from "../shared/environment";
-import { getPaymentSummary } from "../shared/services/payment-summary";
 import { purge } from "../shared/data/database";
-import { sendToQueue } from "../shared/data/queue";
+import { enqueuePayment } from "../shared/data/queue";
+import { getSummary } from "../shared/services/payment-summary";
 
 new Elysia()
   .use(swagger({
@@ -68,13 +68,11 @@ new Elysia()
     })}
   })
   .post("/payments", async ({ body: { correlationId, amount } }) => {
-    sendToQueue({
+    enqueuePayment({
       correlationId,
       amount,
       requestedAt: new Date().getTime()
     });
-
-    return;
   }, {
     body: t.Object({
       correlationId: t.String({
@@ -88,7 +86,7 @@ new Elysia()
     }),
   })
   .get("/payments-summary", ({ query: { from, to } }) => {
-    return getPaymentSummary(from, to);
+    return getSummary(from, to);
   }, {
     query: t.Object({
       from: t.String({ 

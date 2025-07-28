@@ -1,9 +1,10 @@
 import { type Payment, PaymentProcessorType, PaymentProcessorUrl } from "../model/types";
 import { record } from "@elysiajs/opentelemetry";
-import { abort, decode, fastEncode } from "../util";
-import { sendToQueue, pull, pullHealthA } from "../data/queue";
+import { abort, decode, encode, fastEncode } from "../util";
 import { storePayment } from "../data/database";
-import type { Pull } from "zeromq";
+import { DATABASE_URL } from "../environment";
+import { dequeuePayment, enqueuePayment, getHealthyProcessor } from "../data/queue";
+import { redis } from "bun";
 
 let healthyProcessor: PaymentProcessorType = PaymentProcessorType.DEFAULT;
 
@@ -27,52 +28,38 @@ async function postPayment(payload: Payment) {
         if (body?.includes("already exists")) return processor;
       }
     } catch (error) {
-      if (error instanceof DOMException) {
-        // Timeout error
-      } else if (error instanceof Error) {
-        // Other fetch error
-      } else {
-        console.error("Error posting payment:", error);
-      }
+      console.error("Error posting payment:", error);
     }
   });
 }
 
 export async function listenForPayments() {
-  for await(const [msg] of pull) {
-    if (!msg) continue;
-
+  setInterval(async () => {
     try {
-      const payment: Payment = decode<Payment>(msg?.toString());
+      const payment = await dequeuePayment();
+
+      if (!payment) return;
 
       record('store.payment.process', async () => {
-        const processor = await postPayment(payment);
+          const processor = await postPayment(payment);
 
-        if (!processor) {
-          sendToQueue(payment);
-        } else {
-          storePayment(payment, processor)
-        }
+          if (!processor) {
+            enqueuePayment(payment);
+          } else {
+            storePayment(payment, processor)
+          }
       });
-
     } catch (error) {
-      console.error("❗ Error decoding payment data:", error);
-      continue;
+      console.error("❗ Error decoding payment data: " + process.env.VALKEY_URL, error);
     }
-  }
+  }, 1);
 }
 
-export async function listenForHealth(target: Pull) {
-  for await(const [msg] of target) {
-    if (!msg) continue;
-
-    try {
-      const processor = msg.toString() as PaymentProcessorType;
-
+export async function listenForHealthyProcessor() {
+  setInterval(async () => {
+    const processor = await getHealthyProcessor();
+    if (processor) {
       healthyProcessor = processor;
-      console.log(`Processor health updated: ${healthyProcessor}`);
-    } catch (error) {
-      console.error("❗ Error updating processor health:", error);
     }
-  }
+  }, 1_000);
 }
