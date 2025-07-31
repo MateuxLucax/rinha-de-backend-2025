@@ -2,7 +2,7 @@ import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "../environment";
 
 export type PaymentSummaryPart = {
   totalRequests: number;
-  totalAmount: number;
+  totalAmount: string;
 }
 
 export type PaymentSummary = {

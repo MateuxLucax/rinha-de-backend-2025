@@ -1,20 +1,8 @@
-import { t } from "elysia";
-import createAccelerator from "json-accelerator";
 import type { Payment } from "./model/types";
-
-const paymentProcessorPayload = t.Object({
-	correlationId: t.String(),
-	amount: t.Number(),
-  requestedAt: t.Integer(),
-})
-
-export const fastEncode = createAccelerator(paymentProcessorPayload);
 
 export function encode(payload: Payment): string {
 	return `${payload.correlationId}|${payload.amount}|${payload.requestedAt}`;
 }
-
-export const abort = { signal: AbortSignal.timeout(1_000) };
 
 export function decode(data: string): Payment {
 	try {

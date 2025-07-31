@@ -1,7 +1,7 @@
 import { record } from "@elysiajs/opentelemetry";
-import { ADMIN_TOKEN, DATABASE_URL } from "../environment";
-import { PaymentProcessorType, PaymentProcessorUrl, type Payment, type PaymentSummary, type PaymentSummaryPart } from "../model/types";
-import { abort, decode, encode } from "../util";
+import { ADMIN_TOKEN } from "../environment";
+import { PaymentProcessorType, PaymentProcessorUrl, type Payment } from "../model/types";
+import { encode } from "../util";
 import { redis } from "bun";
 
 export async function purge() {
@@ -41,3 +41,24 @@ export async function storePayment(payload: Payment, processor: PaymentProcessor
     return false;
   });
 } 
+
+export async function isHealthCheckLeader() {
+  try {
+    const randomString = Math.random().toString(36).substring(2, 15);
+    const pid = process.pid + randomString;
+
+    const leader = await redis.get("health-check-leader");
+    console.log("🩺 Health Check Leader:", leader, "Current PID:", pid);
+
+  if (!leader) {
+      await redis.set("health-check-leader", pid);
+      return true;
+    }
+
+    if (leader === pid) return true;
+  } catch (error) {
+    console.error("❗ Error checking health check leader:", error);
+  }
+
+  return false;
+}

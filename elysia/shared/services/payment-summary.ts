@@ -12,6 +12,8 @@ export async function getSummary(to: string, from: string): Promise<PaymentSumma
       throw new Error("Invalid date format");
     }
 
+    console.log("🗣️ Fetching payment summary from:", fromTime, "to:", toTime);
+
     const [defaultSummary, fallbackSummary] = await record('get.summary.smembers', async () => {
       return await Promise.all([
         redis.smembers(`payments:${PaymentProcessorType.DEFAULT}`),
@@ -46,7 +48,7 @@ function getSummaryPart(data: string[], to: number, from: number): PaymentSummar
 
     return {
       totalRequests,
-      totalAmount
+      totalAmount: totalAmount.toFixed(2) // Ensure amount is a string with two decimal places
     };
   });
 }

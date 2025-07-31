@@ -1,10 +1,7 @@
 import { type Payment, PaymentProcessorType, PaymentProcessorUrl } from "../model/types";
 import { record } from "@elysiajs/opentelemetry";
-import { abort, decode, encode, fastEncode } from "../util";
 import { storePayment } from "../data/database";
-import { DATABASE_URL } from "../environment";
 import { dequeuePayment, enqueuePayment, getHealthyProcessor } from "../data/queue";
-import { redis } from "bun";
 
 let healthyProcessor: PaymentProcessorType = PaymentProcessorType.DEFAULT;
 
@@ -13,13 +10,12 @@ async function postPayment(payload: Payment) {
     try {
       const processor = healthyProcessor
       const url = PaymentProcessorUrl.getUrl(processor);
-      const response = await fetch(`${url}//payments`, {
+      const response = await fetch(`${url}/payments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: fastEncode(payload),
-        ...abort
+        body: JSON.stringify({ correlationId: payload.correlationId, amount: payload.amount })
       });
 
       if (response.ok) return processor;
@@ -34,25 +30,54 @@ async function postPayment(payload: Payment) {
 }
 
 export async function listenForPayments() {
-  setInterval(async () => {
+  while(true) {
     try {
-      const payment = await dequeuePayment();
+      const payments = await getBatchedPayments();
 
-      if (!payment) return;
+      if (payments.length === 0) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
 
-      record('store.payment.process', async () => {
-          const processor = await postPayment(payment);
+      await Promise.all(payments.map(payment => processPayment(payment)));
 
-          if (!processor) {
-            enqueuePayment(payment);
-          } else {
-            storePayment(payment, processor)
-          }
-      });
     } catch (error) {
       console.error("❗ Error decoding payment data: " + process.env.VALKEY_URL, error);
     }
-  }, 1);
+  }
+}
+
+const MAX_BATCH_SIZE = 25;
+
+async function getBatchedPayments(): Promise<Payment[]> {
+  return record('store.payment.getBatch', async () => {
+    const payments: Payment[] = [];
+    while (payments.length < MAX_BATCH_SIZE) {
+      const payment = await dequeuePayment();
+      if (!payment) break;
+  
+      payments.push(payment);
+    }
+  
+    return payments;
+  });
+}
+
+async function processPayment(payment: Payment) {
+    await record('store.payment.process', async () => {
+      try {
+        const processor = await postPayment(payment);
+  
+        if (processor) {
+          storePayment(payment, processor)
+        } else {
+          enqueuePayment(payment);
+        }
+      } catch (error) {
+        console.error("❗ Error processing payment:", payment.correlationId, error);
+        enqueuePayment(payment);
+      }
+  });
 }
 
 export async function listenForHealthyProcessor() {

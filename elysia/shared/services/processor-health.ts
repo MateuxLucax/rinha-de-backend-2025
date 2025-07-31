@@ -1,22 +1,22 @@
 import { record } from "@elysiajs/opentelemetry";
 import { DEFAULT_PROCESSOR_URL, FALLBACK_PROCESSOR_URL } from "../environment";
 import { PaymentProcessorType, type PaymentProcessorHealthCheckResponse } from "../model/types";
-import { abort } from "../util";
 import { enqueueHealthyProcessor } from "../data/queue";
 
-const HEALTH_CHECK_INTERVAL = 5_000;
+const HEALTH_CHECK_INTERVAL = 5000;
 
 async function getProcessorHealth(processorUrl: string): Promise<PaymentProcessorHealthCheckResponse> {
   return record(`processor.health.check.${processorUrl}`, async () => {
     const defaultResponse = { failing: true, minResponseTime: Infinity };
+    const url = `${processorUrl}/payments/service-health`;
 
     try {
-      const response = await fetch(`${processorUrl}/payments/service-health`, abort);
+      const response = await fetch(url); 
       if (!response.ok) return defaultResponse;
 
       return await response.json() as PaymentProcessorHealthCheckResponse;
     } catch (error) {
-      console.error(`❗ Error fetching health check for ${processorUrl}:`, error);
+      console.error(`❗ Error fetching health check for ${url}:`, error);
       return defaultResponse;
     }
   });
@@ -30,13 +30,10 @@ async function checkProcessorHealth() {
         getProcessorHealth(FALLBACK_PROCESSOR_URL)
       ]);
 
-      if (defaultHealth.failing && fallbackHealth.failing) {
-        console.error("Both payment processors are failing.");
-        return;
-      }
+      if (defaultHealth.failing && fallbackHealth.failing) return;
 
       if (fallbackHealth.failing) return PaymentProcessorType.DEFAULT;
-      if (!defaultHealth.failing && defaultHealth.minResponseTime <= fallbackHealth.minResponseTime) return PaymentProcessorType.DEFAULT;
+      if (!defaultHealth.failing && (defaultHealth.minResponseTime * 1.2) <= fallbackHealth.minResponseTime) return PaymentProcessorType.DEFAULT;
 
       return PaymentProcessorType.FALLBACK;
     } catch (error) {
@@ -50,8 +47,7 @@ export function initProcessorHealthCheck() {
     const healthyProcessor = await checkProcessorHealth();
     if (healthyProcessor) {
       await enqueueHealthyProcessor(healthyProcessor);
-    } else {
-      console.warn("❗ No healthy payment processor found.");
     }
+
   }, HEALTH_CHECK_INTERVAL);
 }

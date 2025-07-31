@@ -1,6 +1,3 @@
-include:
-  - ../docker-compose.yml
-
 x-service-templates:
   api: &api
     build:
@@ -10,8 +7,6 @@ x-service-templates:
         - TARGET=api/index.ts
     env_file:
       - .env
-    networks:
-      - payment-processor
     depends_on:
       - valkey
 
@@ -23,11 +18,7 @@ x-service-templates:
         - TARGET=worker/index.ts
     env_file:
       - .env
-    networks:
-      - payment-processor
     depends_on:
-      - payment-processor-1
-      - payment-processor-2
       - valkey
 
 services:
@@ -38,8 +29,6 @@ services:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       - "9999:80"
-    networks:
-      - payment-processor
 
   api-1:
     <<: *api
@@ -62,5 +51,3 @@ services:
     container_name: valkey
     command: valkey-server --appendonly yes
     hostname: valkey
-    networks:
-      - payment-processor
