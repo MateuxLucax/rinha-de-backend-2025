@@ -32,10 +32,10 @@ async function checkProcessorHealth() {
 
       if (defaultHealth.failing && fallbackHealth.failing) return;
 
-      if (fallbackHealth.failing) return PaymentProcessorType.DEFAULT;
-      if (!defaultHealth.failing && (defaultHealth.minResponseTime * 1.2) <= fallbackHealth.minResponseTime) return PaymentProcessorType.DEFAULT;
+      if (defaultHealth.failing) return PaymentProcessorType.FALLBACK; 
+      if ((defaultHealth.minResponseTime * 1.2) > fallbackHealth.minResponseTime) return PaymentProcessorType.FALLBACK;
 
-      return PaymentProcessorType.FALLBACK;
+      return PaymentProcessorType.DEFAULT;
     } catch (error) {
       console.error("Error checking payment processor health:", error);
     }

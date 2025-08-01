@@ -3,7 +3,7 @@ import { PaymentProcessorType, type PaymentSummary, type PaymentSummaryPart } fr
 import { decode } from "../util";
 import { redis } from "bun";
 
-export async function getSummary(to: string, from: string): Promise<PaymentSummary> {
+export async function getSummary(from: string, to: string): Promise<PaymentSummary> {
   try {
     const toTime = new Date(to).getTime();
     const fromTime = new Date(from).getTime();
@@ -11,8 +11,6 @@ export async function getSummary(to: string, from: string): Promise<PaymentSumma
     if (isNaN(toTime) || isNaN(fromTime)) {
       throw new Error("Invalid date format");
     }
-
-    console.log("🗣️ Fetching payment summary from:", fromTime, "to:", toTime);
 
     const [defaultSummary, fallbackSummary] = await record('get.summary.smembers', async () => {
       return await Promise.all([

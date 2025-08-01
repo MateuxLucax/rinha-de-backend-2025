@@ -68,11 +68,10 @@ new Elysia()
     })}
   })
   .post("/payments", async ({ body: { correlationId, amount } }) => {
-    enqueuePayment({
+    enqueuePayment(
       correlationId,
-      amount,
-      requestedAt: new Date().getTime()
-    });
+      amount
+    );
   }, {
     body: t.Object({
       correlationId: t.String({

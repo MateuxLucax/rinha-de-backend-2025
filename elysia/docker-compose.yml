@@ -1,3 +1,6 @@
+include:
+  - '../docker-compose.yml'
+
 x-service-templates:
   api: &api
     build:
@@ -9,6 +12,14 @@ x-service-templates:
       - .env
     depends_on:
       - valkey
+      - haproxy
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 50M
 
   worker: &worker
     build:
@@ -19,7 +30,16 @@ x-service-templates:
     env_file:
       - .env
     depends_on:
+      - payment-processor-1
+      - payment-processor-2
       - valkey
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 50M
 
 services:
   haproxy:
@@ -29,6 +49,13 @@ services:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       - "9999:80"
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 50M
 
   api-1:
     <<: *api
@@ -51,3 +78,10 @@ services:
     container_name: valkey
     command: valkey-server --appendonly yes
     hostname: valkey
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 30M

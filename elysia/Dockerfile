@@ -24,15 +24,9 @@ RUN bun build \
   --outfile server \
   ./${TARGET}
 
-FROM debian:bullseye-slim AS release
+FROM alpine AS release
 
 WORKDIR /usr/src/app
-
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
-  ln -fs /usr/share/zoneinfo/UTC /etc/localtime && \
-  dpkg-reconfigure -f noninteractive tzdata && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
 
 COPY --from=prerelease /usr/src/app/server ./server
 

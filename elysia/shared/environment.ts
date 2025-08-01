@@ -11,3 +11,5 @@ export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "123";
 export const PORT = process.env.PORT || 9999;
 
 export const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+
+export const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "25", 25);

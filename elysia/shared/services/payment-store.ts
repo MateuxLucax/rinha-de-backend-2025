@@ -2,6 +2,8 @@ import { type Payment, PaymentProcessorType, PaymentProcessorUrl } from "../mode
 import { record } from "@elysiajs/opentelemetry";
 import { storePayment } from "../data/database";
 import { dequeuePayment, enqueuePayment, getHealthyProcessor } from "../data/queue";
+import { OperationCanceledException } from "typescript";
+import { BATCH_SIZE } from "../environment";
 
 let healthyProcessor: PaymentProcessorType = PaymentProcessorType.DEFAULT;
 
@@ -15,7 +17,7 @@ async function postPayment(payload: Payment) {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ correlationId: payload.correlationId, amount: payload.amount })
+        body: JSON.stringify({ correlationId: payload.correlationId, amount: payload.amount, requestedAt: new Date(payload.requestedAt).toISOString() })
       });
 
       if (response.ok) return processor;
@@ -47,12 +49,10 @@ export async function listenForPayments() {
   }
 }
 
-const MAX_BATCH_SIZE = 25;
-
-async function getBatchedPayments(): Promise<Payment[]> {
+async function getBatchedPayments() {
   return record('store.payment.getBatch', async () => {
-    const payments: Payment[] = [];
-    while (payments.length < MAX_BATCH_SIZE) {
+    const payments = [];
+    while (payments.length < BATCH_SIZE) {
       const payment = await dequeuePayment();
       if (!payment) break;
   
@@ -63,19 +63,21 @@ async function getBatchedPayments(): Promise<Payment[]> {
   });
 }
 
-async function processPayment(payment: Payment) {
+async function processPayment({correlationId, amount}: {correlationId: string, amount: number}) {
     await record('store.payment.process', async () => {
       try {
+        const requestedAt = new Date().getTime();
+        const payment: Payment = { correlationId, amount, requestedAt };
         const processor = await postPayment(payment);
   
         if (processor) {
           storePayment(payment, processor)
         } else {
-          enqueuePayment(payment);
+          enqueuePayment(correlationId, amount);
         }
       } catch (error) {
-        console.error("❗ Error processing payment:", payment.correlationId, error);
-        enqueuePayment(payment);
+        console.error("❗ Error processing payment:", correlationId, error);
+        enqueuePayment(correlationId, amount);
       }
   });
 }
