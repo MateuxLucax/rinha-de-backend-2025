@@ -1,10 +1,11 @@
 x-service-templates:
   api: &api
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        - TARGET=api/index.ts
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     - TARGET=api/index.ts
+    image: mateuxlucax/rinha-de-backend-2025:elysia-api
     depends_on:
       - valkey
     networks:
@@ -19,11 +20,12 @@ x-service-templates:
           memory: 50M
 
   worker: &worker
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        - TARGET=worker/index.ts
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     - TARGET=worker/index.ts
+    image: mateuxlucax/rinha-de-backend-2025:elysia-worker
     depends_on:
       - valkey
     networks:
