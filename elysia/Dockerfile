@@ -18,16 +18,17 @@ ARG TARGET
 ENV NODE_ENV=production
 RUN bun build \
   --compile \
-  --minify-whitespace \
-  --minify-syntax \
+  --minify \
   --target bun \
   --outfile server \
   ./${TARGET}
 
-FROM alpine AS release
+FROM base AS release
 
 WORKDIR /usr/src/app
 
 COPY --from=prerelease /usr/src/app/server ./server
+
+RUN chmod +x ./server
 
 ENTRYPOINT [ "./server" ]

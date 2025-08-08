@@ -1,4 +1,3 @@
-import { record } from "@elysiajs/opentelemetry";
 import { ADMIN_TOKEN } from "../environment";
 import { PaymentProcessorType, PaymentProcessorUrl, type Payment } from "../model/types";
 import { encode } from "../util";
@@ -16,9 +15,7 @@ export async function purge() {
     ]);
 
     console.log("🔫 Database purged successfully");
-  } catch (error) {
-    console.error("❗ Error purging database:", error);
-  }
+  } finally {}
 }
 
 async function purgeProcessors(processor: PaymentProcessorType) {
@@ -31,15 +28,9 @@ async function purgeProcessors(processor: PaymentProcessorType) {
 }
 
 export async function storePayment(payload: Payment, processor: PaymentProcessorType): Promise<boolean> {
-  return record('store.payment', async () => {
     try {
       return await redis.sadd(`payments:${processor}`, encode(payload)) > 0;
-    } catch (error) {
-      console.error("❗ Error storing payment:", error);
-    }
-
-    return false;
-  });
+    } finally {}
 } 
 
 export async function isHealthCheckLeader() {
@@ -56,9 +47,7 @@ export async function isHealthCheckLeader() {
     }
 
     if (leader === pid) return true;
-  } catch (error) {
-    console.error("❗ Error checking health check leader:", error);
-  }
+  } finally {}
 
   return false;
 }

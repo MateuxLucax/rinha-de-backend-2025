@@ -1,6 +1,3 @@
-include:
-  - '../docker-compose.yml'
-
 x-service-templates:
   api: &api
     build:
@@ -8,13 +5,13 @@ x-service-templates:
       dockerfile: Dockerfile
       args:
         - TARGET=api/index.ts
-    env_file:
-      - .env
     depends_on:
       - valkey
-      - haproxy
     networks:
       - payment-processor
+      - backend
+    environment:
+      - VALKEY_URL=valkey://valkey:6379
     deploy:
       resources:
         limits:
@@ -27,14 +24,15 @@ x-service-templates:
       dockerfile: Dockerfile
       args:
         - TARGET=worker/index.ts
-    env_file:
-      - .env
     depends_on:
-      - payment-processor-1
-      - payment-processor-2
       - valkey
     networks:
+      - backend
       - payment-processor
+    environment:
+      - VALKEY_URL=valkey://valkey:6379
+      - PAYMENT_PROCESSOR_URL_DEFAULT=http://payment-processor-default:8080
+      - PAYMENT_PROCESSOR_URL_FALLBACK=http://payment-processor-fallback:8080
     deploy:
       resources:
         limits:
@@ -50,7 +48,10 @@ services:
     ports:
       - "9999:80"
     networks:
-      - payment-processor
+      - backend
+    depends_on:
+      - api-1
+      - api-2
     deploy:
       resources:
         limits:
@@ -79,9 +80,15 @@ services:
     command: valkey-server --appendonly yes
     hostname: valkey
     networks:
-      - payment-processor
+      - backend
     deploy:
       resources:
         limits:
           cpus: '0.2'
           memory: 30M
+
+networks:
+  backend:
+    driver: bridge
+  payment-processor:
+    external: true

@@ -1,0 +1,41 @@
+name: Build and Push Elysia API and Worker images
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout Repository
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build and Push API Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: "./elysia"
+          push: true
+          build-args: |
+            TARGET=api/index.ts
+          tags: mateuxlucax/rinha-de-backend-2025:elysia-api
+      
+      - name: Build and Push Worker Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: "./elysia"
+          push: true
+          build-args: |
+            TARGET=worker/index.ts
+          tags: mateuxlucax/rinha-de-backend-2025:elysia-worker

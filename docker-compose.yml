@@ -86,8 +86,7 @@ services:
 
 networks:
   payment-processor:
-    name: payment-processor
-    driver: bridge
+    external: true
   payment-processor-db:
     driver: bridge
 
